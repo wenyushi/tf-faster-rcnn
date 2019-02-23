@@ -63,11 +63,11 @@ def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anch
   labels[gt_argmax_overlaps] = 1
 
   # fg label: above threshold IOU
-  labels[max_overlaps >= cfg.TRAIN.RPN_POSITIVE_OVERLAP] = 1
+  labels[max_overlaps >= cfg.TRAIN.RPN_POSITIVE_OVERLAP] = 1  # 0.7
 
   if cfg.TRAIN.RPN_CLOBBER_POSITIVES:
     # assign bg labels last so that negative labels can clobber positives
-    labels[max_overlaps < cfg.TRAIN.RPN_NEGATIVE_OVERLAP] = 0
+    labels[max_overlaps < cfg.TRAIN.RPN_NEGATIVE_OVERLAP] = 0  # 0.3
 
   # subsample positive labels if we have too many
   num_fg = int(cfg.TRAIN.RPN_FG_FRACTION * cfg.TRAIN.RPN_BATCHSIZE)
@@ -86,12 +86,14 @@ def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anch
     labels[disable_inds] = -1
 
   bbox_targets = np.zeros((len(inds_inside), 4), dtype=np.float32)
-  bbox_targets = _compute_targets(anchors, gt_boxes[argmax_overlaps, :])
+  bbox_targets = _compute_targets(anchors, gt_boxes[argmax_overlaps, :])  # how to get anchor targets
 
   bbox_inside_weights = np.zeros((len(inds_inside), 4), dtype=np.float32)
   # only the positive ones have regression targets
-  bbox_inside_weights[labels == 1, :] = np.array(cfg.TRAIN.RPN_BBOX_INSIDE_WEIGHTS)
+  bbox_inside_weights[labels == 1, :] = np.array(cfg.TRAIN.RPN_BBOX_INSIDE_WEIGHTS)  # (1, 1, 1, 1)
 
+
+  '''bbox_outside_weights calculation'''
   bbox_outside_weights = np.zeros((len(inds_inside), 4), dtype=np.float32)
   if cfg.TRAIN.RPN_POSITIVE_WEIGHT < 0:
     # uniform weighting of examples (given non-uniform sampling)

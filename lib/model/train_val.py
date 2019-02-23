@@ -35,7 +35,7 @@ class SolverWrapper(object):
     self.roidb = roidb
     self.valroidb = valroidb
     self.output_dir = output_dir
-    self.tbdir = tbdir
+    self.tbdir = tbdir # tensorboard directory
     # Simply put '_val' at the end to save the summaries from the validation set
     self.tbvaldir = tbdir + '_val'
     if not os.path.exists(self.tbvaldir):

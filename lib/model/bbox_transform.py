@@ -24,6 +24,7 @@ def bbox_transform(ex_rois, gt_rois):
 
   targets_dx = (gt_ctr_x - ex_ctr_x) / ex_widths
   targets_dy = (gt_ctr_y - ex_ctr_y) / ex_heights
+  # take log scale of the offset of width and hight
   targets_dw = np.log(gt_widths / ex_widths)
   targets_dh = np.log(gt_heights / ex_heights)
 
@@ -33,6 +34,7 @@ def bbox_transform(ex_rois, gt_rois):
 
 
 def bbox_transform_inv(boxes, deltas):
+  '''Given offset and ground truth, get predictions'''
   if boxes.shape[0] == 0:
     return np.zeros((0, deltas.shape[1]), dtype=deltas.dtype)
 

@@ -108,6 +108,7 @@ class Network(object):
     return rois, rpn_scores
 
   def _proposal_layer(self, rpn_cls_prob, rpn_bbox_pred, name):
+    '''given rpn classification prob and bbox offset prediction to get 2000 rois'''
     with tf.variable_scope(name) as scope:
       if cfg.USE_E2E_TF:
         rois, rpn_scores = proposal_layer_tf(
@@ -131,13 +132,14 @@ class Network(object):
     return rois, rpn_scores
 
   # Only use it if you have roi_pooling op written in tf.image
+  # bootom is feature of conv5-3, rois is output of RPN layer, yield fixed size of features
   def _roi_pool_layer(self, bootom, rois, name):
     with tf.variable_scope(name) as scope:
       return tf.image.roi_pooling(bootom, rois,
                                   pooled_height=cfg.POOLING_SIZE,
                                   pooled_width=cfg.POOLING_SIZE,
                                   spatial_scale=1. / 16.)[0]
-
+  '''used to substitue roi_pool'''
   def _crop_pool_layer(self, bottom, rois, name):
     with tf.variable_scope(name) as scope:
       batch_ids = tf.squeeze(tf.slice(rois, [0, 0], [-1, 1], name="batch_id"), [1])
@@ -145,13 +147,18 @@ class Network(object):
       bottom_shape = tf.shape(bottom)
       height = (tf.to_float(bottom_shape[1]) - 1.) * np.float32(self._feat_stride[0])
       width = (tf.to_float(bottom_shape[2]) - 1.) * np.float32(self._feat_stride[0])
+      # 这里可以看到先对rois进行了一个转换操作，h,w是resize后的图像大小，把rois除以h,w就得到了rois在特征图上的位置
       x1 = tf.slice(rois, [0, 1], [-1, 1], name="x1") / width
       y1 = tf.slice(rois, [0, 2], [-1, 1], name="y1") / height
       x2 = tf.slice(rois, [0, 3], [-1, 1], name="x2") / width
       y2 = tf.slice(rois, [0, 4], [-1, 1], name="y2") / height
-      # Won't be back-propagated to rois anyway, but to save time
+      '''然后把conv5_3先crop,就是把roi对应的特征crop出来，然后resize到14*14的大小，resize是为了后面的统一大小，这个操作很有创意，
+      也比较有意思，直接使用了tensorflow的图像处理方法 crop_and_resize 来进行类似 ROI 的操作，
+      最后再做了一个减半的pooling操作，得到7*7的特征图
+      '''
+      '''Won't be back-propagated to rois anyway, but to save time'''
       bboxes = tf.stop_gradient(tf.concat([y1, x1, y2, x2], axis=1))
-      pre_pool_size = cfg.POOLING_SIZE * 2
+      pre_pool_size = cfg.POOLING_SIZE * 2  # 7*2
       crops = tf.image.crop_and_resize(bottom, bboxes, tf.to_int32(batch_ids), [pre_pool_size, pre_pool_size], name="crops")
 
     return slim.max_pool2d(crops, [2, 2], padding='SAME')
@@ -160,6 +167,7 @@ class Network(object):
     return tf.nn.dropout(bottom, ratio, name=name)
 
   def _anchor_target_layer(self, rpn_cls_score, name):
+    '''rpn_cls_score (1, 38, 67, 18)'''
     with tf.variable_scope(name) as scope:
       rpn_labels, rpn_bbox_targets, rpn_bbox_inside_weights, rpn_bbox_outside_weights = tf.py_func(
         anchor_target_layer,
@@ -336,11 +344,27 @@ class Network(object):
                                 weights_initializer=initializer,
                                 padding='VALID', activation_fn=None, scope='rpn_bbox_pred')
     if is_training:
+      '''proposal_layer takes delta as input and convert it into ROIs via bbox_transform_inv and then clip it into
+      inside of images. Then use another input, rpn_cls_prob, to sort ROIs based on score. In training process, it would
+      take first 12000 ROIs which is in shape of (<=2000, 5) and rois_scores in shape of (<=2000, 1)'''
       rois, roi_scores = self._proposal_layer(rpn_cls_prob, rpn_bbox_pred, "rois")
-      rpn_labels = self._anchor_target_layer(rpn_cls_score, "anchor")
+      # anchor_target_layer used to get label for RPN layer
+      '''anchor_target_layer is used to generate the target label for RPN network. It would firstly get rid of anchors
+      outside of image and then assign positive and negative label for each anchors. 
+      Finally, calculate the target delta(diffs between ground truth and each anchors)
+      so that delta(rpn_bbox_pred) tries to fit target delta'''
+      rpn_labels = self._anchor_target_layer(rpn_cls_score, "anchor")  # 256
       # Try to have a deterministic order for the computing graph, for reproducibility
+      '''Proposal_target_layer is used to generate the target label for Faster RCNN network. 
+      Based on ROIs(<=2000, 5), it samples __C.TRAIN.RPN_BATCHSIZE = 256 observations as a batch to do loss calculation.
+      # IOU >= thresh: positive example
+      __C.TRAIN.RPN_POSITIVE_OVERLAP = 0.7
+      
+      # IOU < thresh: negative example
+      __C.TRAIN.RPN_NEGATIVE_OVERLAP = 0.3
+      '''
       with tf.control_dependencies([rpn_labels]):
-        rois, _ = self._proposal_target_layer(rois, roi_scores, "rpn_rois")
+        rois, _ = self._proposal_target_layer(rois, roi_scores, "rpn_rois")  # (256, 5)
     else:
       if cfg.TEST.MODE == 'nms':
         rois, _ = self._proposal_layer(rpn_cls_prob, rpn_bbox_pred, "rois")
@@ -358,6 +382,7 @@ class Network(object):
 
     return rois
 
+  '''head of Faster RCNN'''
   def _region_classification(self, fc7, is_training, initializer, initializer_bbox):
     cls_score = slim.fully_connected(fc7, self._num_classes, 
                                        weights_initializer=initializer,
@@ -385,7 +410,7 @@ class Network(object):
 
   def create_architecture(self, mode, num_classes, tag=None,
                           anchor_scales=(8, 16, 32), anchor_ratios=(0.5, 1, 2)):
-    self._image = tf.placeholder(tf.float32, shape=[1, None, None, 3])
+    self._image = tf.placeholder(tf.float32, shape=[1, None, None, 3])  # one image in three channels
     self._im_info = tf.placeholder(tf.float32, shape=[3])
     self._gt_boxes = tf.placeholder(tf.float32, shape=[None, 5])
     self._tag = tag
@@ -486,6 +511,7 @@ class Network(object):
     return summary
 
   def train_step(self, sess, blobs, train_op):
+    # im_info: width, height, im_scales
     feed_dict = {self._image: blobs['data'], self._im_info: blobs['im_info'],
                  self._gt_boxes: blobs['gt_boxes']}
     rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, loss, _ = sess.run([self._losses["rpn_cross_entropy"],
