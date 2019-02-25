@@ -147,14 +147,17 @@ class Network(object):
       bottom_shape = tf.shape(bottom)
       height = (tf.to_float(bottom_shape[1]) - 1.) * np.float32(self._feat_stride[0])
       width = (tf.to_float(bottom_shape[2]) - 1.) * np.float32(self._feat_stride[0])
-      # 这里可以看到先对rois进行了一个转换操作，h,w是resize后的图像大小，把rois除以h,w就得到了rois在特征图上的位置
+      '''
+      extract the bounding boxes info from the ROIs tensor
+      '''
       x1 = tf.slice(rois, [0, 1], [-1, 1], name="x1") / width
       y1 = tf.slice(rois, [0, 2], [-1, 1], name="y1") / height
       x2 = tf.slice(rois, [0, 3], [-1, 1], name="x2") / width
       y2 = tf.slice(rois, [0, 4], [-1, 1], name="y2") / height
-      '''然后把conv5_3先crop,就是把roi对应的特征crop出来，然后resize到14*14的大小，resize是为了后面的统一大小，这个操作很有创意，
-      也比较有意思，直接使用了tensorflow的图像处理方法 crop_and_resize 来进行类似 ROI 的操作，
-      最后再做了一个减半的pooling操作，得到7*7的特征图
+      '''
+      crop a bunch of feature tensor(__C.TRAIN.RPN_BATCHSIZE = 256) from conv5_3 and then resize to 14 *14 to unify 
+      the feature size. Tensorflow provides an operation called crop_and_resize to do above. After that do pooling operation and 
+      output a pool_size tensor.
       '''
       '''Won't be back-propagated to rois anyway, but to save time'''
       bboxes = tf.stop_gradient(tf.concat([y1, x1, y2, x2], axis=1))
